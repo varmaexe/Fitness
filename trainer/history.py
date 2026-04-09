@@ -14,6 +14,8 @@ PARSERS = {
 
 def _sorted_date_dirs(folder: Path) -> list[tuple[str, Path]]:
     """Return (date_str, path) tuples sorted newest-first, only YYYY-MM-DD dirs."""
+    if not folder.exists():
+        return []
     dirs = []
     for d in folder.iterdir():
         if d.is_dir() and len(d.name) == 10:
@@ -28,6 +30,8 @@ def _sorted_date_dirs(folder: Path) -> list[tuple[str, Path]]:
 def get_recent_sessions(folder: Path, log_filename: str, parser_type: str,
                         n: int, exclude_date: str) -> list[dict]:
     """Return last n parsed sessions from a folder, excluding exclude_date."""
+    if parser_type not in PARSERS:
+        raise ValueError(f"Unknown parser_type '{parser_type}'. Valid types: {list(PARSERS)}")
     parser = PARSERS[parser_type]
     results = []
     for date_str, date_dir in _sorted_date_dirs(folder):
