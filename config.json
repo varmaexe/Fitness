@@ -1,0 +1,15 @@
+{
+  "name": "Sai",
+  "age": 25,
+  "sex": "male",
+  "weight_kg": 80,
+  "body_fat_pct": 20,
+  "experience_years": 4,
+  "phase": "cut",
+  "phase_notes": "Mini-cut. Slight caloric deficit. Prioritise muscle preservation.",
+  "training_days_target": 7,
+  "split": ["push", "pull", "legs-abs", "arms"],
+  "maintenance_calories": 2600,
+  "goal_calories_cut": 2200,
+  "goal_protein_g": 160
+}
