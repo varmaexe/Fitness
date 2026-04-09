@@ -15,8 +15,6 @@ FOLDER_MAP = {
     "sleep": "sleep",
 }
 
-WORKOUT_TYPES = {"push", "pull", "legs", "arms", "cardio"}
-
 PARSER_FOR_TYPE = {
     "push": parse_workout,
     "pull": parse_workout,
@@ -47,6 +45,10 @@ def build_context(root: Path, session_type: str, date: str) -> dict:
     session_type: push | pull | legs | arms | cardio | calories | weight | sleep
     date: YYYY-MM-DD string
     """
+    if session_type not in FOLDER_MAP:
+        raise ValueError(
+            f"Unknown session_type '{session_type}'. Valid types: {list(FOLDER_MAP)}"
+        )
     config = json.loads((root / "config.json").read_text())
 
     folder_name = FOLDER_MAP[session_type]
@@ -76,6 +78,8 @@ def build_context(root: Path, session_type: str, date: str) -> dict:
     weight_folder = root / "weight"
     calories_folder = root / "calories-count"
 
+    # Use "9999-99-99" as exclude_date sentinel to retrieve all recent cross-reference
+    # data without excluding any date (sleep/weight/calories are always fully loaded).
     recent_sleep = (get_recent_single_logs(sleep_folder, "log.md", "sleep", 7, "9999-99-99")
                     if sleep_folder.exists() else [])
     recent_weight = (get_recent_single_logs(weight_folder, "log.txt", "weight", 7, "9999-99-99")
