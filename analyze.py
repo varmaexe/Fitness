@@ -55,22 +55,31 @@ def run_summary(date_str: str) -> None:
 
     print(f"[Trainer] Building weekly summary up to {date_str}...")
 
-    workout_folders = {
-        "push": ROOT / "push",
-        "pull": ROOT / "pull",
-        "legs-abs": ROOT / "legs-abs",
-        "arms": ROOT / "arms",
+    # Collect all workout sessions using FOLDER_MAP to avoid drift
+    WORKOUT_SESSION_TYPES = {
+        "push": "workout",
+        "pull": "workout",
+        "legs": "workout",
+        "arms": "workout",
+        "cardio": "cardio",
     }
 
     sessions_found = []
-    for label, folder in workout_folders.items():
+    for session_key, parser_type in WORKOUT_SESSION_TYPES.items():
+        folder_name = FOLDER_MAP[session_key]
+        folder = ROOT / folder_name
+        log_filename = "log.txt"
         if not folder.exists():
             continue
-        recent = get_recent_sessions(folder, "log.txt", "workout", 7, "9999-99-99")
+        recent = get_recent_sessions(folder, log_filename, parser_type, 7, "9999-99-99")
         for s in recent:
-            sessions_found.append({"type": label, **s})
+            sessions_found.append({"type": session_key, **s})
 
-    config = json.loads((ROOT / "config.json").read_text())
+    config_file = ROOT / "config.json"
+    if not config_file.exists():
+        print("[Error] config.json not found. Run init_folders.py first.")
+        sys.exit(1)
+    config = json.loads(config_file.read_text())
 
     sleep_folder = ROOT / "sleep"
     weight_folder = ROOT / "weight"
@@ -86,7 +95,11 @@ def run_summary(date_str: str) -> None:
     sessions_text = ""
     for s in sorted(sessions_found, key=lambda x: x["date"], reverse=True)[:14]:
         sessions_text += f"\n{s['type'].upper()} — {s['date']}: "
-        sessions_text += f"{s['total_volume_kg']}kg total, {s['total_sets']} sets\n"
+        if "total_volume_kg" in s:
+            sessions_text += f"{s['total_volume_kg']}kg total, {s['total_sets']} sets"
+        elif "duration_minutes" in s:
+            sessions_text += f"{s['duration_minutes']}min {s.get('type', 'cardio')}"
+        sessions_text += "\n"
 
     phase = config.get("phase", "cut")
     system_prompt = (
