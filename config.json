@@ -10,6 +10,6 @@
   "training_days_target": 7,
   "split": ["push", "pull", "legs-abs", "arms"],
   "maintenance_calories": 2600,
-  "goal_calories_cut": 2200,
+  "goal_calories": 2200,
   "goal_protein_g": 160
 }
