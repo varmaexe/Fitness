@@ -1,11 +1,12 @@
 # trainer/parsers.py
 import re
-from pathlib import Path
 
 
 def parse_workout(text: str) -> dict:
     """Parse a FitNotes plain-text workout export into a structured dict."""
     lines = text.strip().splitlines()
+    if not lines:
+        return {"date_label": "", "total_volume_kg": 0, "total_sets": 0, "total_reps": 0, "exercises": []}
 
     # Header
     date_label = ""
@@ -17,7 +18,9 @@ def parse_workout(text: str) -> dict:
     if header_date:
         date_label = header_date.group(1).strip()
 
-    for line in lines[1:4]:
+    for line in lines[1:]:
+        if re.match(r"\*\*\s*.+?\s*\*\*", line):
+            break  # hit first exercise header, stop scanning totals
         m = re.search(r"Total Volume:\s*([\d,]+)", line)
         if m:
             total_volume_kg = int(m.group(1).replace(",", ""))
@@ -65,7 +68,7 @@ def parse_workout(text: str) -> dict:
             continue
 
         # Set line with weight: "- 25.0 kgs x 7 reps" or "- 25.0 kgs x 7 reps [note]"
-        set_match = re.match(r"-\s*([\d.]+)\s*kgs?\s*x\s*(\d+)\s*reps?(?:\s*\[(.+?)\])?", line)
+        set_match = re.match(r"-\s*(\d+(?:\.\d+)?)\s*kgs?\s*x\s*(\d+)\s*reps?(?:\s*\[(.+?)\])?", line)
         if set_match:
             current_exercise["sets"].append({
                 "weight_kg": float(set_match.group(1)),

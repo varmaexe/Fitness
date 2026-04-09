@@ -65,3 +65,18 @@ def test_parse_workout_set_with_note_no_weight():
     dips_sets = result["exercises"][1]["sets"]
     # "- 10.0 kgs x 6 reps [Bodyweight 80kg]"
     assert dips_sets[0] == {"weight_kg": 10.0, "reps": 6, "notes": "Bodyweight 80kg"}
+
+
+def test_parse_workout_empty_input():
+    result = parse_workout("")
+    assert result["date_label"] == ""
+    assert result["total_volume_kg"] == 0
+    assert result["exercises"] == []
+
+
+def test_parse_workout_per_exercise_totals():
+    result = parse_workout(WORKOUT_LOG)
+    incline = result["exercises"][0]
+    assert incline["total_volume_kg"] == 790
+    assert incline["total_sets"] == 5
+    assert incline["total_reps"] == 28
