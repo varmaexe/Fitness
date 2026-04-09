@@ -98,17 +98,130 @@ def parse_workout(text: str) -> dict:
     }
 
 
+def _parse_duration_to_minutes(text: str) -> int:
+    """Convert '6h 50m' or '1h 23m' or '57m' or '32m' to total minutes."""
+    h_match = re.search(r"(\d+)\s*h", text)
+    m_match = re.search(r"(\d+)\s*m", text)
+    hours = int(h_match.group(1)) if h_match else 0
+    minutes = int(m_match.group(1)) if m_match else 0
+    return hours * 60 + minutes
+
+
 def parse_calories(text: str) -> dict:
-    raise NotImplementedError("parse_calories not yet implemented")
+    """Parse a manual calories log file into a dict."""
+    result = {
+        "calories": 0, "protein_g": 0, "carbs_g": 0,
+        "fats_g": 0, "fiber_g": 0, "notes": "",
+    }
+    for line in text.strip().splitlines():
+        m = re.match(r"Calories:\s*(\d+)", line)
+        if m:
+            result["calories"] = int(m.group(1))
+        m = re.match(r"Protein:\s*(\d+)", line)
+        if m:
+            result["protein_g"] = int(m.group(1))
+        m = re.match(r"Carbs:\s*(\d+)", line)
+        if m:
+            result["carbs_g"] = int(m.group(1))
+        m = re.match(r"Fats:\s*(\d+)", line)
+        if m:
+            result["fats_g"] = int(m.group(1))
+        m = re.match(r"Fiber:\s*(\d+)", line)
+        if m:
+            result["fiber_g"] = int(m.group(1))
+        m = re.match(r"Notes:\s*(.+)", line)
+        if m:
+            result["notes"] = m.group(1).strip()
+    return result
 
 
 def parse_weight(text: str) -> dict:
-    raise NotImplementedError("parse_weight not yet implemented")
+    """Parse a manual weight log file into a dict."""
+    result = {"weight_kg": 0.0, "notes": ""}
+    for line in text.strip().splitlines():
+        m = re.match(r"(\d+(?:\.\d+)?)\s*kg", line)
+        if m:
+            result["weight_kg"] = float(m.group(1))
+        m = re.match(r"Notes:\s*(.+)", line)
+        if m:
+            result["notes"] = m.group(1).strip()
+    return result
 
 
 def parse_sleep(text: str) -> dict:
-    raise NotImplementedError("parse_sleep not yet implemented")
+    """Parse a Samsung Health sleep extraction file into a dict."""
+    result = {
+        "sleep_time_minutes": 0,
+        "physical_recovery_pct": 0,
+        "restfulness_pct": 0,
+        "mental_recovery_pct": 0,
+        "sleep_cycles": 0,
+        "stages": {
+            "awake_minutes": 0, "awake_pct": 0,
+            "rem_minutes": 0, "rem_pct": 0,
+            "light_minutes": 0, "light_pct": 0,
+            "deep_minutes": 0, "deep_pct": 0,
+        },
+        "notes": "",
+    }
+    for line in text.strip().splitlines():
+        m = re.match(r"Sleep Time:\s*(.+)", line)
+        if m:
+            result["sleep_time_minutes"] = _parse_duration_to_minutes(m.group(1))
+        m = re.match(r"Physical Recovery:\s*(\d+)%", line)
+        if m:
+            result["physical_recovery_pct"] = int(m.group(1))
+        m = re.match(r"Restfulness:\s*(\d+)%", line)
+        if m:
+            result["restfulness_pct"] = int(m.group(1))
+        m = re.match(r"Mental Recovery:\s*(\d+)%", line)
+        if m:
+            result["mental_recovery_pct"] = int(m.group(1))
+        m = re.match(r"Sleep Cycles:\s*(\d+)", line)
+        if m:
+            result["sleep_cycles"] = int(m.group(1))
+        m = re.match(r"Awake:\s*(.+?)\s*\((\d+)%\)", line)
+        if m:
+            result["stages"]["awake_minutes"] = _parse_duration_to_minutes(m.group(1))
+            result["stages"]["awake_pct"] = int(m.group(2))
+        m = re.match(r"REM:\s*(.+?)\s*\((\d+)%\)", line)
+        if m:
+            result["stages"]["rem_minutes"] = _parse_duration_to_minutes(m.group(1))
+            result["stages"]["rem_pct"] = int(m.group(2))
+        m = re.match(r"Light:\s*(.+?)\s*\((\d+)%\)", line)
+        if m:
+            result["stages"]["light_minutes"] = _parse_duration_to_minutes(m.group(1))
+            result["stages"]["light_pct"] = int(m.group(2))
+        m = re.match(r"Deep:\s*(.+?)\s*\((\d+)%\)", line)
+        if m:
+            result["stages"]["deep_minutes"] = _parse_duration_to_minutes(m.group(1))
+            result["stages"]["deep_pct"] = int(m.group(2))
+        m = re.match(r"Notes:\s*(.+)", line)
+        if m:
+            result["notes"] = m.group(1).strip()
+    return result
 
 
 def parse_cardio(text: str) -> dict:
-    raise NotImplementedError("parse_cardio not yet implemented")
+    """Parse a manual cardio log file into a dict."""
+    result = {
+        "type": "", "duration_minutes": 0,
+        "intensity": "", "heart_rate_bpm": 0, "notes": "",
+    }
+    for line in text.strip().splitlines():
+        m = re.match(r"Type:\s*(.+)", line)
+        if m:
+            result["type"] = m.group(1).strip()
+        m = re.match(r"Duration:\s*(\d+)", line)
+        if m:
+            result["duration_minutes"] = int(m.group(1))
+        m = re.match(r"Intensity:\s*(.+)", line)
+        if m:
+            result["intensity"] = m.group(1).strip()
+        m = re.match(r"Heart Rate:\s*~?(\d+)", line)
+        if m:
+            result["heart_rate_bpm"] = int(m.group(1))
+        m = re.match(r"Notes:\s*(.+)", line)
+        if m:
+            result["notes"] = m.group(1).strip()
+    return result

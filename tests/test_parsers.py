@@ -80,3 +80,82 @@ def test_parse_workout_per_exercise_totals():
     assert incline["total_volume_kg"] == 790
     assert incline["total_sets"] == 5
     assert incline["total_reps"] == 28
+
+
+CALORIES_LOG = """Calories: 2200
+Protein: 160g
+Carbs: 220g
+Fats: 65g
+Fiber: 28g
+Notes: Ate late, skipped breakfast
+"""
+
+WEIGHT_LOG = """79.85kg
+Notes: Morning, after bathroom
+"""
+
+SLEEP_LOG = """Sleep Time: 6h 50m
+Physical Recovery: 64%
+Restfulness: 87%
+Mental Recovery: 84%
+Sleep Cycles: 4
+Awake: 57m (13%)
+REM: 1h 23m (20%)
+Light: 3h 58m (60%)
+Deep: 32m (7%)
+Notes: Woke up twice, felt groggy
+"""
+
+CARDIO_LOG = """Type: Treadmill
+Duration: 30min
+Intensity: Moderate
+Heart Rate: ~145bpm
+Notes: Felt easy, could push harder
+"""
+
+
+def test_parse_calories():
+    result = parse_calories(CALORIES_LOG)
+    assert result["calories"] == 2200
+    assert result["protein_g"] == 160
+    assert result["carbs_g"] == 220
+    assert result["fats_g"] == 65
+    assert result["fiber_g"] == 28
+    assert result["notes"] == "Ate late, skipped breakfast"
+
+
+def test_parse_weight():
+    result = parse_weight(WEIGHT_LOG)
+    assert result["weight_kg"] == 79.85
+    assert result["notes"] == "Morning, after bathroom"
+
+
+def test_parse_sleep_top_level():
+    result = parse_sleep(SLEEP_LOG)
+    assert result["sleep_time_minutes"] == 410  # 6h50m
+    assert result["physical_recovery_pct"] == 64
+    assert result["restfulness_pct"] == 87
+    assert result["mental_recovery_pct"] == 84
+    assert result["sleep_cycles"] == 4
+    assert result["notes"] == "Woke up twice, felt groggy"
+
+
+def test_parse_sleep_stages():
+    result = parse_sleep(SLEEP_LOG)
+    assert result["stages"]["awake_minutes"] == 57
+    assert result["stages"]["awake_pct"] == 13
+    assert result["stages"]["rem_minutes"] == 83   # 1h 23m
+    assert result["stages"]["rem_pct"] == 20
+    assert result["stages"]["light_minutes"] == 238  # 3h 58m
+    assert result["stages"]["light_pct"] == 60
+    assert result["stages"]["deep_minutes"] == 32
+    assert result["stages"]["deep_pct"] == 7
+
+
+def test_parse_cardio():
+    result = parse_cardio(CARDIO_LOG)
+    assert result["type"] == "Treadmill"
+    assert result["duration_minutes"] == 30
+    assert result["intensity"] == "Moderate"
+    assert result["heart_rate_bpm"] == 145
+    assert result["notes"] == "Felt easy, could push harder"
