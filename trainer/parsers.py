@@ -212,9 +212,9 @@ def parse_cardio(text: str) -> dict:
         m = re.match(r"Type:\s*(.+)", line)
         if m:
             result["type"] = m.group(1).strip()
-        m = re.match(r"Duration:\s*(\d+)", line)
+        m = re.match(r"Duration:\s*(.+)", line)
         if m:
-            result["duration_minutes"] = int(m.group(1))
+            result["duration_minutes"] = _parse_duration_to_minutes(m.group(1))
         m = re.match(r"Intensity:\s*(.+)", line)
         if m:
             result["intensity"] = m.group(1).strip()
