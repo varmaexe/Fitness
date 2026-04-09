@@ -12,6 +12,7 @@ PHASE_RULES = {
     "lean-bulk": """
 - Target weight gain: 0.25–0.5kg/week. Flag if gaining faster than 0.5kg/week (too much fat).
 - Flag if weight not increasing after 3 weeks (under-eating).
+- Protein must stay at or above {goal_protein_g}g/day — muscle synthesis requires it even in a surplus.
 - Push progressive overload every session — add reps or weight compared to last session.
 - Volume should increase gradually every 2–3 weeks.
 - Ensure adequate caloric surplus — flag if calories are at or below maintenance.
@@ -37,15 +38,18 @@ def _format_workout_history(sessions: list[dict]) -> str:
 
 
 def _format_today_workout(today: dict) -> str:
-    lines = [f"Date: {today['date']} ({today.get('date_label', '')})",
-             f"Total volume: {today['total_volume_kg']}kg | Sets: {today['total_sets']} | Reps: {today['total_reps']}"]
+    lines = [
+        f"Date: {today.get('date', 'unknown')} ({today.get('date_label', '')})",
+        f"Total volume: {today.get('total_volume_kg', 0)}kg | "
+        f"Sets: {today.get('total_sets', 0)} | Reps: {today.get('total_reps', 0)}",
+    ]
     for ex in today.get("exercises", []):
         set_strs = []
-        for st in ex["sets"]:
-            w = f"{st['weight_kg']}kg" if st["weight_kg"] > 0 else "BW"
-            note = f" [{st['notes']}]" if st["notes"] else ""
-            set_strs.append(f"{w}×{st['reps']}{note}")
-        lines.append(f"  {ex['name']}: {' | '.join(set_strs)}")
+        for st in ex.get("sets", []):
+            w = f"{st.get('weight_kg', 0)}kg" if st.get("weight_kg", 0) > 0 else "BW"
+            note = f" [{st['notes']}]" if st.get("notes") else ""
+            set_strs.append(f"{w}×{st.get('reps', 0)}{note}")
+        lines.append(f"  {ex.get('name', 'Unknown Exercise')}: {' | '.join(set_strs)}")
     return "\n".join(lines)
 
 
