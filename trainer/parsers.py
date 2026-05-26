@@ -110,25 +110,25 @@ def _parse_duration_to_minutes(text: str) -> int:
 def parse_calories(text: str) -> dict:
     """Parse a manual calories log file into a dict."""
     result = {
-        "calories": 0, "protein_g": 0, "carbs_g": 0,
-        "fats_g": 0, "fiber_g": 0, "notes": "",
+        "calories": 0, "protein_g": 0.0, "carbs_g": 0.0,
+        "fats_g": 0.0, "fiber_g": 0.0, "notes": "",
     }
     for line in text.strip().splitlines():
         m = re.match(r"Calories:\s*(\d+)", line)
         if m:
             result["calories"] = int(m.group(1))
-        m = re.match(r"Protein:\s*(\d+)", line)
+        m = re.match(r"Protein:\s*(\d+(?:\.\d+)?)", line)
         if m:
-            result["protein_g"] = int(m.group(1))
-        m = re.match(r"Carbs:\s*(\d+)", line)
+            result["protein_g"] = float(m.group(1))
+        m = re.match(r"Carbs:\s*(\d+(?:\.\d+)?)", line)
         if m:
-            result["carbs_g"] = int(m.group(1))
-        m = re.match(r"Fats:\s*(\d+)", line)
+            result["carbs_g"] = float(m.group(1))
+        m = re.match(r"Fats:\s*(\d+(?:\.\d+)?)", line)
         if m:
-            result["fats_g"] = int(m.group(1))
-        m = re.match(r"Fiber:\s*(\d+)", line)
+            result["fats_g"] = float(m.group(1))
+        m = re.match(r"Fiber:\s*(\d+(?:\.\d+)?)", line)
         if m:
-            result["fiber_g"] = int(m.group(1))
+            result["fiber_g"] = float(m.group(1))
         m = re.match(r"Notes:\s*(.+)", line)
         if m:
             result["notes"] = m.group(1).strip()
@@ -149,7 +149,12 @@ def parse_weight(text: str) -> dict:
 
 
 def parse_sleep(text: str) -> dict:
-    """Parse a Samsung Health sleep extraction file into a dict."""
+    """Parse a Samsung Health sleep extraction file into a dict.
+
+    If the file contains freetext instead of structured fields (e.g. a manual
+    note about missed tracking), the raw text is preserved in 'notes' so the
+    trainer still receives the context rather than seeing silent zeros.
+    """
     result = {
         "sleep_time_minutes": 0,
         "physical_recovery_pct": 0,
@@ -164,7 +169,11 @@ def parse_sleep(text: str) -> dict:
         },
         "notes": "",
     }
-    for line in text.strip().splitlines():
+    stripped = text.strip()
+    if not stripped:
+        return result
+
+    for line in stripped.splitlines():
         m = re.match(r"Sleep Time:\s*(.+)", line)
         if m:
             result["sleep_time_minutes"] = _parse_duration_to_minutes(m.group(1))
@@ -199,6 +208,12 @@ def parse_sleep(text: str) -> dict:
         m = re.match(r"Notes:\s*(.+)", line)
         if m:
             result["notes"] = m.group(1).strip()
+
+    # Freetext fallback: if no structured fields were parsed but the file has
+    # content, preserve the raw text as notes so it reaches the trainer.
+    if result["sleep_time_minutes"] == 0 and not result["notes"] and stripped:
+        result["notes"] = stripped
+
     return result
 
 

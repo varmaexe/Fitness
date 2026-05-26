@@ -58,12 +58,16 @@ def _format_sleep(recent_sleep: list[dict]) -> str:
         return "No sleep data available."
     lines = []
     for s in recent_sleep[:3]:
-        lines.append(
-            f"{s['date']}: {s['sleep_time_minutes']//60}h{s['sleep_time_minutes']%60}m | "
-            f"Physical: {s['physical_recovery_pct']}% | Mental: {s['mental_recovery_pct']}% | "
-            f"Deep: {s['stages']['deep_minutes']}m ({s['stages']['deep_pct']}%) | "
-            f"REM: {s['stages']['rem_minutes']}m | Notes: {s['notes'] or 'none'}"
-        )
+        if s["sleep_time_minutes"] == 0 and s["notes"]:
+            # Freetext entry — no structured Samsung Health data
+            lines.append(f"{s['date']}: [no structured data] {s['notes']}")
+        else:
+            lines.append(
+                f"{s['date']}: {s['sleep_time_minutes']//60}h{s['sleep_time_minutes']%60}m | "
+                f"Physical: {s['physical_recovery_pct']}% | Mental: {s['mental_recovery_pct']}% | "
+                f"Deep: {s['stages']['deep_minutes']}m ({s['stages']['deep_pct']}%) | "
+                f"REM: {s['stages']['rem_minutes']}m | Notes: {s['notes'] or 'none'}"
+            )
     return "\n".join(lines)
 
 
@@ -86,6 +90,20 @@ def _format_calories(recent_calories: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _format_cardio(recent_cardio: list[dict]) -> str:
+    if not recent_cardio:
+        return "No cardio data available."
+    lines = []
+    for c in recent_cardio:
+        parts = [f"{c['date']}: {c['type']} {c['duration_minutes']}min @ {c['intensity']}"]
+        if c.get('heart_rate_bpm'):
+            parts.append(f"HR ~{c['heart_rate_bpm']}bpm")
+        if c.get('notes'):
+            parts.append(f"Notes: {c['notes']}")
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+
 def build_prompt(ctx: dict) -> tuple[str, str]:
     """
     Build (system_prompt, user_message) from a context dict.
@@ -99,7 +117,7 @@ def build_prompt(ctx: dict) -> tuple[str, str]:
 
     system_prompt = f"""You are an experienced, direct personal trainer and sports nutritionist with deep knowledge of exercise science, hypertrophy, body composition, and periodisation.
 
-You are coaching {cfg['name']}, a {cfg['age']}-year-old {cfg['sex']}, {cfg['weight_kg']}kg bodyweight, approximately {cfg['body_fat_pct']}% body fat, with {cfg['experience_years']} years of training experience. Estimated lean mass: {round(cfg['weight_kg'] * (1 - cfg['body_fat_pct']/100), 1)}kg.
+You are coaching {cfg['name']}, a {cfg['age']}-year-old {cfg['sex']}, {cfg['weight_kg']}kg bodyweight, {cfg.get('height_cm', '?')}cm height, approximately {cfg['body_fat_pct']}% body fat, with {cfg['experience_years']} years of training experience. Estimated lean mass: {round(cfg['weight_kg'] * (1 - cfg['body_fat_pct']/100), 1)}kg. BMI: {round(cfg['weight_kg'] / (cfg.get('height_cm', 170) / 100) ** 2, 1)}.
 
 Current training phase: {phase.upper()}
 Phase goal: {cfg.get('phase_notes', '')}
@@ -114,6 +132,7 @@ Your coaching style:
 - Pick up every inline form note in the log and respond to it specifically.
 - Cross-reference sleep recovery scores with performance — low physical recovery explains strength drops.
 - Cross-reference nutrition with training days — flag low protein or under-eating on heavy training days.
+- Cross-reference recent cardio sessions — flag excessive cardio volume or high-intensity cardio within 48h of a heavy session as a recovery risk.
 - Flag consistency issues — missed training days affect progress and must be named.
 - Every feedback ends with a concrete next session plan: exact exercises, sets, reps, weights.
 - One single priority for the week — the most important thing to fix or focus on.
@@ -152,6 +171,10 @@ Be specific. Use actual numbers from the log. If data is missing, say so and exp
 ## Recent Nutrition Data (last 3 days)
 
 {_format_calories(ctx['recent_calories'])}
+
+## Recent Cardio (last 5 sessions)
+
+{_format_cardio(ctx['recent_cardio'])}
 
 ---
 

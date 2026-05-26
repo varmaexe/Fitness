@@ -42,9 +42,7 @@ def weight_folder(tmp_path):
         ("2026-04-08", WEIGHT_CONTENT_2),
         ("2026-04-07", WEIGHT_CONTENT_3),
     ]:
-        d = tmp_path / date
-        d.mkdir()
-        (d / "log.txt").write_text(content)
+        (tmp_path / f"{date}.txt").write_text(content)
     return tmp_path
 
 
@@ -82,8 +80,8 @@ def test_get_recent_sessions_excludes_today(workout_folder):
 
 
 def test_get_recent_single_logs(weight_folder):
-    logs = get_recent_single_logs(weight_folder, log_filename="log.txt",
-                                  parser_type="weight", n=7, exclude_date="2026-04-10")
+    logs = get_recent_single_logs(weight_folder, log_filename="", parser_type="weight",
+                                  n=7, exclude_date="2026-04-10", flat=True)
     assert len(logs) == 3
     assert logs[0]["date"] == "2026-04-09"
     assert logs[0]["weight_kg"] == 79.5

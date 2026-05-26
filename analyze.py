@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
 # analyze.py
 """
-AI Personal Trainer — analyze your fitness logs.
+AI Personal Trainer — analyze fitness logs, generate files, or init workspace.
 
 Usage:
     python analyze.py push              # today's push session
     python analyze.py legs 2026-04-07  # specific date
     python analyze.py summary          # weekly overview
+    python analyze.py init             # create top-level folders
+    python analyze.py gen push         # generate 10 upcoming log files for push
+    python analyze.py gen sleep --count 5
 """
 import sys
 import json
 import argparse
 from pathlib import Path
-from datetime import date as date_cls
+from datetime import date as date_cls, timedelta
 
-from trainer.context import build_context, FOLDER_MAP
+from trainer.context import build_context, FOLDER_MAP, FLAT_TYPES
 from trainer.prompt import build_prompt, _format_sleep, _format_weight, _format_calories
 from trainer.api import call_claude
 from trainer.writer import write_feedback
+from trainer.history import get_recent_sessions, get_recent_single_logs
 
 ROOT = Path(__file__).parent
 
-VALID_TYPES = list(FOLDER_MAP.keys())
+WORKOUT_TYPES = [t for t in FOLDER_MAP if t not in FLAT_TYPES]
+VALID_ANALYSIS_TYPES = list(FOLDER_MAP.keys())
 
 
 def resolve_date(date_arg: str | None) -> str:
@@ -29,6 +34,10 @@ def resolve_date(date_arg: str | None) -> str:
         return date_arg
     return date_cls.today().strftime("%Y-%m-%d")
 
+
+# ---------------------------------------------------------------------------
+# Analysis
+# ---------------------------------------------------------------------------
 
 def run_analysis(session_type: str, date_str: str) -> None:
     print(f"[Trainer] Analyzing {session_type} session for {date_str}...")
@@ -50,46 +59,37 @@ def run_analysis(session_type: str, date_str: str) -> None:
 
 def run_summary(date_str: str) -> None:
     """Weekly overview: collect all sessions from the last 7 days and summarise."""
-    from trainer.history import get_recent_sessions, get_recent_single_logs
-    from trainer.parsers import parse_workout
-
     print(f"[Trainer] Building weekly summary up to {date_str}...")
 
-    # Collect all workout sessions using FOLDER_MAP to avoid drift
-    WORKOUT_SESSION_TYPES = {
-        "push": "workout",
-        "pull": "workout",
-        "legs": "workout",
-        "arms": "workout",
-        "cardio": "cardio",
-    }
-
     sessions_found = []
-    for session_key, parser_type in WORKOUT_SESSION_TYPES.items():
-        folder_name = FOLDER_MAP[session_key]
-        folder = ROOT / folder_name
-        log_filename = "log.txt"
+    for session_key in WORKOUT_TYPES:
+        folder = ROOT / FOLDER_MAP[session_key]
         if not folder.exists():
             continue
-        recent = get_recent_sessions(folder, log_filename, parser_type, 7, "9999-99-99")
+        parser_type = "cardio" if session_key == "cardio" else "workout"
+        recent = get_recent_sessions(folder, "log.txt", parser_type, 7, "9999-99-99",
+                                     up_to_date=date_str)
         for s in recent:
             sessions_found.append({"type": session_key, **s})
 
     config_file = ROOT / "config.json"
     if not config_file.exists():
-        print("[Error] config.json not found. Run init_folders.py first.")
+        print("[Error] config.json not found. Run: python analyze.py init")
         sys.exit(1)
     config = json.loads(config_file.read_text())
 
     sleep_folder = ROOT / "sleep"
     weight_folder = ROOT / "weight"
-    calories_folder = ROOT / "calories-count"
+    calories_folder = ROOT / "calories"
 
-    recent_sleep = (get_recent_single_logs(sleep_folder, "log.md", "sleep", 7, "9999-99-99")
+    recent_sleep = (get_recent_single_logs(sleep_folder, "", "sleep", 7, "9999-99-99",
+                                           up_to_date=date_str, flat=True)
                     if sleep_folder.exists() else [])
-    recent_weight = (get_recent_single_logs(weight_folder, "log.txt", "weight", 7, "9999-99-99")
+    recent_weight = (get_recent_single_logs(weight_folder, "", "weight", 7, "9999-99-99",
+                                            up_to_date=date_str, flat=True)
                      if weight_folder.exists() else [])
-    recent_calories = (get_recent_single_logs(calories_folder, "log.txt", "calories", 3, "9999-99-99")
+    recent_calories = (get_recent_single_logs(calories_folder, "", "calories", 3, "9999-99-99",
+                                              up_to_date=date_str, flat=True)
                        if calories_folder.exists() else [])
 
     sessions_text = ""
@@ -98,7 +98,7 @@ def run_summary(date_str: str) -> None:
         if "total_volume_kg" in s:
             sessions_text += f"{s['total_volume_kg']}kg total, {s['total_sets']} sets"
         elif "duration_minutes" in s:
-            sessions_text += f"{s['duration_minutes']}min {s.get('type', 'cardio')}"
+            sessions_text += f"{s['duration_minutes']}min cardio"
         sessions_text += "\n"
 
     phase = config.get("phase", "cut")
@@ -108,7 +108,6 @@ def run_summary(date_str: str) -> None:
         f"Provide a structured weekly review covering: training consistency, volume trends, "
         f"recovery quality, nutrition adequacy, and top priorities for next week. Be direct and specific."
     )
-
     user_message = (
         f"## Weekly Summary — up to {date_str}\n\n"
         f"## Sessions This Week\n{sessions_text or 'No sessions logged.'}\n\n"
@@ -127,25 +126,118 @@ def run_summary(date_str: str) -> None:
     print("\n" + feedback[:500] + "...")
 
 
+# ---------------------------------------------------------------------------
+# Init
+# ---------------------------------------------------------------------------
+
+def run_init() -> None:
+    """Create top-level folder structure for a fresh workspace."""
+    for folder_name in FOLDER_MAP.values():
+        path = ROOT / folder_name
+        path.mkdir(exist_ok=True)
+        print(f"  {folder_name}/")
+    (ROOT / "progress-pics").mkdir(exist_ok=True)
+    print("  progress-pics/")
+    print("\nWorkspace ready.")
+    print("Workout logs:   push/YYYY-MM-DD/log.txt")
+    print("Daily logs:     sleep/YYYY-MM-DD.txt  |  weight/YYYY-MM-DD.txt  |  calories/YYYY-MM-DD.txt")
+
+
+# ---------------------------------------------------------------------------
+# Generate files
+# ---------------------------------------------------------------------------
+
+def run_gen(target: str, count: int) -> None:
+    """Generate upcoming empty log files starting from today."""
+    if target not in FOLDER_MAP:
+        print(f"[Error] Unknown target '{target}'. Valid: {', '.join(FOLDER_MAP)}")
+        sys.exit(1)
+    if not (1 <= count <= 30):
+        print("[Error] --count must be between 1 and 30.")
+        sys.exit(1)
+
+    folder = ROOT / FOLDER_MAP[target]
+    if not folder.exists():
+        print(f"[Error] Folder '{folder}' doesn't exist. Run: python analyze.py init")
+        sys.exit(1)
+
+    today = date_cls.today()
+    created = skipped = 0
+    is_flat = target in FLAT_TYPES
+
+    for i in range(count):
+        date_str = (today + timedelta(days=i)).strftime("%Y-%m-%d")
+        if is_flat:
+            path = folder / f"{date_str}.txt"
+            if path.exists():
+                skipped += 1
+            else:
+                path.write_text("")
+                created += 1
+        else:
+            date_dir = folder / date_str
+            log_file = date_dir / "log.txt"
+            if date_dir.exists():
+                skipped += 1
+            else:
+                date_dir.mkdir(parents=True)
+                log_file.write_text("")
+                created += 1
+
+    print(f"Target: {FOLDER_MAP[target]}/")
+    print(f"Created: {created}  Skipped: {skipped} (already existed)")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
 def main():
-    parser = argparse.ArgumentParser(description="AI Personal Trainer")
-    parser.add_argument("type", choices=VALID_TYPES + ["summary"],
-                        help="Session type to analyze")
-    parser.add_argument("date", nargs="?", default=None,
-                        help="Date in YYYY-MM-DD format (default: today)")
+    parser = argparse.ArgumentParser(
+        description="AI Personal Trainer",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python analyze.py push              # today's push session\n"
+            "  python analyze.py pull 2026-04-10   # specific date\n"
+            "  python analyze.py summary           # weekly overview\n"
+            "  python analyze.py init              # create folder structure\n"
+            "  python analyze.py gen push          # generate 10 push log files\n"
+            "  python analyze.py gen sleep --count 7\n"
+        ),
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Analysis subcommands (one per session type + summary)
+    for stype in VALID_ANALYSIS_TYPES + ["summary"]:
+        sp = subparsers.add_parser(stype, help=f"Analyze {stype} session")
+        if stype != "summary":
+            sp.add_argument("date", nargs="?", default=None,
+                            help="YYYY-MM-DD (default: today)")
+
+    # Init
+    subparsers.add_parser("init", help="Create top-level folder structure")
+
+    # Gen
+    gen_p = subparsers.add_parser("gen", help="Generate empty log files")
+    gen_p.add_argument("target", help=f"Type: {', '.join(FOLDER_MAP)}")
+    gen_p.add_argument("--count", type=int, default=10,
+                       help="Number of files to create (default: 10)")
+
     args = parser.parse_args()
 
-    date_str = resolve_date(args.date)
-
-    if args.type == "summary":
-        run_summary(date_str)
+    if args.command == "init":
+        run_init()
+    elif args.command == "gen":
+        run_gen(args.target, args.count)
+    elif args.command == "summary":
+        run_summary(resolve_date(None))
     else:
+        date_str = resolve_date(getattr(args, "date", None))
         try:
-            run_analysis(args.type, date_str)
+            run_analysis(args.command, date_str)
         except FileNotFoundError as e:
             print(f"[Error] {e}")
-            print(f"Make sure you have a log file at: "
-                  f"{FOLDER_MAP[args.type]}/{date_str}/log.txt")
             sys.exit(1)
 
 

@@ -7,10 +7,10 @@ from trainer.history import get_recent_sessions, get_recent_single_logs
 FOLDER_MAP = {
     "push": "push",
     "pull": "pull",
-    "legs": "legs-abs",
+    "legs": "legs",
     "arms": "arms",
-    "cardio": "cardio-notes",
-    "calories": "calories-count",
+    "cardio": "cardio",
+    "calories": "calories",
     "weight": "weight",
     "sleep": "sleep",
 }
@@ -26,16 +26,19 @@ PARSER_FOR_TYPE = {
     "sleep": parse_sleep,
 }
 
+# Filename for workout session logs (folder-based types only)
 LOG_FILENAME = {
     "push": "log.txt", "pull": "log.txt", "legs": "log.txt",
-    "arms": "log.txt", "cardio": "log.txt", "calories": "log.txt",
-    "weight": "log.txt", "sleep": "log.md",
+    "arms": "log.txt", "cardio": "log.txt",
 }
 
 HISTORY_PARSER_TYPE = {
     "push": "workout", "pull": "workout", "legs": "workout",
     "arms": "workout", "cardio": "cardio",
 }
+
+# Daily log types use flat YYYY-MM-DD.txt files (no subfolder per date)
+FLAT_TYPES = {"sleep", "weight", "calories"}
 
 
 def build_context(root: Path, session_type: str, date: str) -> dict:
@@ -53,7 +56,11 @@ def build_context(root: Path, session_type: str, date: str) -> dict:
 
     folder_name = FOLDER_MAP[session_type]
     folder = root / folder_name
-    log_file = folder / date / LOG_FILENAME[session_type]
+
+    if session_type in FLAT_TYPES:
+        log_file = folder / f"{date}.txt"
+    else:
+        log_file = folder / date / LOG_FILENAME[session_type]
 
     if not log_file.exists():
         raise FileNotFoundError(f"No log found at {log_file}")
@@ -62,7 +69,7 @@ def build_context(root: Path, session_type: str, date: str) -> dict:
     today = parser(log_file.read_text())
     today["date"] = date
 
-    # History for same session type
+    # History for same session type (workout sessions only — folder-based)
     history = []
     if session_type in HISTORY_PARSER_TYPE:
         history = get_recent_sessions(
@@ -71,20 +78,33 @@ def build_context(root: Path, session_type: str, date: str) -> dict:
             parser_type=HISTORY_PARSER_TYPE[session_type],
             n=5,
             exclude_date=date,
+            up_to_date=date,
         )
 
-    # Cross-reference data
+    # Cross-reference cardio sessions — folder-based, last 5 sessions
+    cardio_folder = root / FOLDER_MAP["cardio"]
+    recent_cardio = (get_recent_sessions(
+        folder=cardio_folder,
+        log_filename="log.txt",
+        parser_type="cardio",
+        n=5,
+        exclude_date=date if session_type == "cardio" else None,
+        up_to_date=date,
+    ) if cardio_folder.exists() else [])
+
+    # Cross-reference daily logs — flat files, capped at session date
     sleep_folder = root / "sleep"
     weight_folder = root / "weight"
-    calories_folder = root / "calories-count"
+    calories_folder = root / "calories"
 
-    # Use "9999-99-99" as exclude_date sentinel to retrieve all recent cross-reference
-    # data without excluding any date (sleep/weight/calories are always fully loaded).
-    recent_sleep = (get_recent_single_logs(sleep_folder, "log.md", "sleep", 7, "9999-99-99")
+    recent_sleep = (get_recent_single_logs(sleep_folder, "", "sleep", 7, "9999-99-99",
+                                           up_to_date=date, flat=True)
                     if sleep_folder.exists() else [])
-    recent_weight = (get_recent_single_logs(weight_folder, "log.txt", "weight", 7, "9999-99-99")
+    recent_weight = (get_recent_single_logs(weight_folder, "", "weight", 7, "9999-99-99",
+                                            up_to_date=date, flat=True)
                      if weight_folder.exists() else [])
-    recent_calories = (get_recent_single_logs(calories_folder, "log.txt", "calories", 3, "9999-99-99")
+    recent_calories = (get_recent_single_logs(calories_folder, "", "calories", 3, "9999-99-99",
+                                              up_to_date=date, flat=True)
                        if calories_folder.exists() else [])
 
     return {
@@ -96,4 +116,5 @@ def build_context(root: Path, session_type: str, date: str) -> dict:
         "recent_sleep": recent_sleep,
         "recent_weight": recent_weight,
         "recent_calories": recent_calories,
+        "recent_cardio": recent_cardio,
     }

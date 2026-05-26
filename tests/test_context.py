@@ -22,7 +22,7 @@ CONFIG = {
     "phase": "cut",
     "phase_notes": "Mini-cut.",
     "training_days_target": 7,
-    "split": ["push", "pull", "legs-abs", "arms"],
+    "split": ["push", "pull", "legs", "arms"],
     "maintenance_calories": 2600,
     "goal_calories": 2200,
     "goal_protein_g": 160,
@@ -43,6 +43,14 @@ def fitness_root(tmp_path):
     push_past = tmp_path / "push" / "2026-04-06"
     push_past.mkdir(parents=True)
     (push_past / "log.txt").write_text(WORKOUT_LOG.replace("9th April", "6th April"))
+
+    # Flat daily log files
+    (tmp_path / "sleep").mkdir()
+    (tmp_path / "sleep" / "2026-04-10.txt").write_text("Sleep Time: 7h 0m\nPhysical Recovery: 80%\n")
+    (tmp_path / "weight").mkdir()
+    (tmp_path / "weight" / "2026-04-10.txt").write_text("79.0kg\nNotes: Morning\n")
+    (tmp_path / "calories").mkdir()
+    (tmp_path / "calories" / "2026-04-10.txt").write_text("Calories: 2200\nProtein: 160\n")
 
     return tmp_path
 
@@ -70,8 +78,22 @@ def test_build_context_missing_today_raises(fitness_root):
         build_context(fitness_root, "push", "2026-04-11")
 
 
-def test_build_context_sleep_weight_calories_empty_when_missing(fitness_root):
+def test_build_context_sleep_weight_calories_present(fitness_root):
     ctx = build_context(fitness_root, "push", "2026-04-10")
+    assert len(ctx["recent_sleep"]) == 1
+    assert ctx["recent_sleep"][0]["sleep_time_minutes"] == 420
+    assert len(ctx["recent_weight"]) == 1
+    assert ctx["recent_weight"][0]["weight_kg"] == 79.0
+    assert len(ctx["recent_calories"]) == 1
+    assert ctx["recent_calories"][0]["calories"] == 2200
+
+
+def test_build_context_sleep_weight_calories_empty_when_missing(tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps(CONFIG))
+    push_today = tmp_path / "push" / "2026-04-10"
+    push_today.mkdir(parents=True)
+    (push_today / "log.txt").write_text(WORKOUT_LOG)
+    ctx = build_context(tmp_path, "push", "2026-04-10")
     assert ctx["recent_sleep"] == []
     assert ctx["recent_weight"] == []
     assert ctx["recent_calories"] == []
