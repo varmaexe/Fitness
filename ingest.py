@@ -13,6 +13,9 @@ Usage:
     python ingest.py workout.txt     # read from a file
     python ingest.py --split pull    # force the split
     python ingest.py --watch inbox/  # file every .txt dropped into inbox/ (e.g. Syncthing)
+    python ingest.py --no-analyze    # just file it, skip the trainer feedback
+
+After saving, the trainer analysis runs and the feedback is printed in the terminal.
 """
 import argparse
 import re
@@ -132,7 +135,17 @@ def read_clipboard() -> str | None:
     return None
 
 
-def watch(inbox: Path, root: Path, poll: float = 2.0) -> None:
+def analyze_saved(dest: Path, root: Path) -> None:
+    """Run the trainer on a freshly saved log; feedback prints to the terminal."""
+    import analyze  # lazy: keeps plain filing usable even if the trainer breaks
+    split, date = dest.relative_to(root).parts[:2]
+    try:
+        analyze.run_analysis(split, date)
+    except Exception as e:  # filing already succeeded; don't lose that
+        print(f"✗ Analysis failed: {e}  (retry: python analyze.py {split} {date})", file=sys.stderr)
+
+
+def watch(inbox: Path, root: Path, poll: float = 2.0, run_analysis: bool = True) -> None:
     """File every *.txt that appears in inbox; move processed files to inbox/done/."""
     done = inbox / "done"
     done.mkdir(parents=True, exist_ok=True)
@@ -151,6 +164,8 @@ def watch(inbox: Path, root: Path, poll: float = 2.0) -> None:
                 continue
             f.rename(done / f.name)
             print(f"✓ {f.name} → {dest.relative_to(root)}")
+            if run_analysis:
+                analyze_saved(dest, root)
         time.sleep(poll)
 
 
@@ -161,11 +176,12 @@ def main() -> int:
     p.add_argument("--split", choices=SPLITS, help="Force the split instead of inferring it.")
     p.add_argument("--force", action="store_true", help="Overwrite an existing, different log.")
     p.add_argument("--watch", metavar="DIR", help="Watch DIR and file every .txt dropped into it.")
+    p.add_argument("--no-analyze", action="store_true", help="Don't run the trainer after saving.")
     args = p.parse_args()
 
     if args.watch:
         try:
-            watch(Path(args.watch).expanduser().resolve(), ROOT)
+            watch(Path(args.watch).expanduser().resolve(), ROOT, run_analysis=not args.no_analyze)
         except KeyboardInterrupt:
             pass
         return 0
@@ -186,6 +202,8 @@ def main() -> int:
         print(f"✗ {e}", file=sys.stderr)
         return 1
     print(f"✓ Saved → {dest.relative_to(ROOT)}")
+    if not args.no_analyze:
+        analyze_saved(dest, ROOT)
     return 0
 
 

@@ -7,6 +7,7 @@ Usage:
     python analyze.py push              # today's push session
     python analyze.py legs 2026-04-07  # specific date
     python analyze.py summary          # weekly overview
+    python analyze.py show             # re-display latest feedback
     python analyze.py init             # create top-level folders
     python analyze.py gen push         # generate 10 upcoming log files for push
     python analyze.py gen sleep --count 5
@@ -21,6 +22,7 @@ from trainer.context import build_context, FOLDER_MAP, FLAT_TYPES
 from trainer.prompt import build_prompt, _format_sleep, _format_weight, _format_calories
 from trainer.api import call_claude
 from trainer.writer import write_feedback
+from trainer.display import show_markdown, find_feedback
 from trainer.history import get_recent_sessions, get_recent_single_logs
 
 ROOT = Path(__file__).parent
@@ -52,9 +54,8 @@ def run_analysis(session_type: str, date_str: str) -> None:
     session_folder = ROOT / folder_name / date_str
     output_path = write_feedback(session_folder, feedback)
 
-    print(f"[Trainer] Feedback written to: {output_path}")
-    print("\n" + "="*60)
-    print(feedback[:500] + "..." if len(feedback) > 500 else feedback)
+    print(f"[Trainer] Feedback written to: {output_path.relative_to(ROOT)}")
+    show_markdown(feedback, title=f"{session_type.upper()} — {date_str}")
 
 
 def run_summary(date_str: str) -> None:
@@ -122,8 +123,21 @@ def run_summary(date_str: str) -> None:
 
     output_file = ROOT / f"summary-{date_str}.md"
     output_file.write_text(feedback)
-    print(f"[Trainer] Weekly summary written to: {output_file}")
-    print("\n" + feedback[:500] + "...")
+    print(f"[Trainer] Weekly summary written to: {output_file.relative_to(ROOT)}")
+    show_markdown(feedback, title=f"WEEKLY SUMMARY — {date_str}")
+
+
+def run_show(session_type: str | None, date_str: str | None) -> None:
+    """Print a saved feedback file (default: the most recent one)."""
+    path = find_feedback(ROOT, WORKOUT_TYPES, session_type, date_str)
+    if path is None:
+        what = " ".join(x for x in (session_type, date_str) if x) or "any session"
+        print(f"[Trainer] No feedback found for {what}.")
+        sys.exit(1)
+    rel = path.relative_to(ROOT)
+    title = (f"{rel.parts[0].upper()} — {rel.parts[1]}" if len(rel.parts) == 3
+             else path.stem.replace("summary-", "WEEKLY SUMMARY — "))
+    show_markdown(path.read_text(), title=title)
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +215,8 @@ def main():
             "  python analyze.py push              # today's push session\n"
             "  python analyze.py pull 2026-04-10   # specific date\n"
             "  python analyze.py summary           # weekly overview\n"
+            "  python analyze.py show              # re-display latest feedback\n"
+            "  python analyze.py show arms         # latest arms feedback\n"
             "  python analyze.py init              # create folder structure\n"
             "  python analyze.py gen push          # generate 10 push log files\n"
             "  python analyze.py gen sleep --count 7\n"
@@ -214,6 +230,11 @@ def main():
         if stype != "summary":
             sp.add_argument("date", nargs="?", default=None,
                             help="YYYY-MM-DD (default: today)")
+
+    # Show
+    show_p = subparsers.add_parser("show", help="Display saved feedback (default: latest)")
+    show_p.add_argument("args", nargs="*", metavar="TYPE|DATE",
+                        help="Optional session type and/or YYYY-MM-DD")
 
     # Init
     subparsers.add_parser("init", help="Create top-level folder structure")
@@ -230,6 +251,10 @@ def main():
         run_init()
     elif args.command == "gen":
         run_gen(args.target, args.count)
+    elif args.command == "show":
+        stype = next((a for a in args.args if a in WORKOUT_TYPES), None)
+        dstr = next((a for a in args.args if a not in WORKOUT_TYPES), None)
+        run_show(stype, dstr)
     elif args.command == "summary":
         run_summary(resolve_date(None))
     else:
