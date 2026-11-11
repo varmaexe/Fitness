@@ -441,7 +441,10 @@ def main() -> None:
         sys.exit("TELEGRAM_BOT_TOKEN is missing. Put  TELEGRAM_BOT_TOKEN=<token>  in .env")
     owner = os.environ.get("TELEGRAM_ALLOWED_USER_ID", "").strip()
 
-    app = Application.builder().token(token).concurrent_updates(True).build()
+    # Generous timeouts: the default 5s read timeout aborts on a briefly slow network.
+    app = (Application.builder().token(token).concurrent_updates(True)
+           .connect_timeout(15).read_timeout(30).write_timeout(60).media_write_timeout(120)
+           .build())
     app.bot_data["owner"] = int(owner) if owner else None
     if not owner:
         log.warning("TELEGRAM_ALLOWED_USER_ID not set — the bot will only reply with your user ID.")
@@ -456,7 +459,9 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(handle_button))
 
     log.info("Bot running. Ctrl-C to stop.")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # bootstrap_retries=-1: keep retrying at startup instead of exiting when the
+    # network isn't up yet (e.g. right after boot or a Wi-Fi drop).
+    app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=-1)
 
 
 if __name__ == "__main__":
