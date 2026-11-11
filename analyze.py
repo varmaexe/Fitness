@@ -41,19 +41,19 @@ def resolve_date(date_arg: str | None) -> str:
 # Analysis
 # ---------------------------------------------------------------------------
 
-def run_analysis(session_type: str, date_str: str) -> None:
-    print(f"[Trainer] Analyzing {session_type} session for {date_str}...")
-
+def generate_feedback(session_type: str, date_str: str) -> tuple[Path, str]:
+    """Analyze a session, save feedback.md, and return (path, feedback)."""
     ctx = build_context(ROOT, session_type, date_str)
     system_prompt, user_message = build_prompt(ctx)
-
-    print("[Trainer] Calling Claude API...")
     feedback = call_claude(system_prompt, user_message)
+    session_folder = ROOT / FOLDER_MAP[session_type] / date_str
+    return write_feedback(session_folder, feedback), feedback
 
-    folder_name = FOLDER_MAP[session_type]
-    session_folder = ROOT / folder_name / date_str
-    output_path = write_feedback(session_folder, feedback)
 
+def run_analysis(session_type: str, date_str: str) -> None:
+    print(f"[Trainer] Analyzing {session_type} session for {date_str}...")
+    print("[Trainer] Calling Claude...")
+    output_path, feedback = generate_feedback(session_type, date_str)
     print(f"[Trainer] Feedback written to: {output_path.relative_to(ROOT)}")
     show_markdown(feedback, title=f"{session_type.upper()} — {date_str}")
 
@@ -61,6 +61,14 @@ def run_analysis(session_type: str, date_str: str) -> None:
 def run_summary(date_str: str) -> None:
     """Weekly overview: collect all sessions from the last 7 days and summarise."""
     print(f"[Trainer] Building weekly summary up to {date_str}...")
+    print("[Trainer] Calling Claude for weekly summary...")
+    output_file, feedback = generate_summary(date_str)
+    print(f"[Trainer] Weekly summary written to: {output_file.relative_to(ROOT)}")
+    show_markdown(feedback, title=f"WEEKLY SUMMARY — {date_str}")
+
+
+def generate_summary(date_str: str) -> tuple[Path, str]:
+    """Build the weekly review, save summary-<date>.md, and return (path, text)."""
 
     sessions_found = []
     for session_key in WORKOUT_TYPES:
@@ -75,8 +83,7 @@ def run_summary(date_str: str) -> None:
 
     config_file = ROOT / "config.json"
     if not config_file.exists():
-        print("[Error] config.json not found. Run: python analyze.py init")
-        sys.exit(1)
+        raise FileNotFoundError("config.json not found. Run: python analyze.py init")
     config = json.loads(config_file.read_text())
 
     sleep_folder = ROOT / "sleep"
@@ -107,7 +114,9 @@ def run_summary(date_str: str) -> None:
         f"You are an experienced personal trainer reviewing {config['name']}'s weekly training summary. "
         f"Current phase: {phase.upper()}. Phase goal: {config.get('phase_notes', '')} "
         f"Provide a structured weekly review covering: training consistency, volume trends, "
-        f"recovery quality, nutrition adequacy, and top priorities for next week. Be direct and specific."
+        f"recovery quality, nutrition adequacy, and top priorities for next week. Be direct and specific. "
+        f"Start the response with a `## TL;DR` heading: two sentences plus the top 3 priorities "
+        f"as a numbered list, under 400 characters."
     )
     user_message = (
         f"## Weekly Summary — up to {date_str}\n\n"
@@ -118,13 +127,10 @@ def run_summary(date_str: str) -> None:
         f"Provide a full weekly review with top 3 priorities for next week."
     )
 
-    print("[Trainer] Calling Claude API for weekly summary...")
     feedback = call_claude(system_prompt, user_message)
-
     output_file = ROOT / f"summary-{date_str}.md"
     output_file.write_text(feedback)
-    print(f"[Trainer] Weekly summary written to: {output_file.relative_to(ROOT)}")
-    show_markdown(feedback, title=f"WEEKLY SUMMARY — {date_str}")
+    return output_file, feedback
 
 
 def run_show(session_type: str | None, date_str: str | None) -> None:
@@ -256,7 +262,11 @@ def main():
         dstr = next((a for a in args.args if a not in WORKOUT_TYPES), None)
         run_show(stype, dstr)
     elif args.command == "summary":
-        run_summary(resolve_date(None))
+        try:
+            run_summary(resolve_date(None))
+        except FileNotFoundError as e:
+            print(f"[Error] {e}")
+            sys.exit(1)
     else:
         date_str = resolve_date(getattr(args, "date", None))
         try:

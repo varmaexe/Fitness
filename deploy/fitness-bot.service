@@ -1,0 +1,21 @@
+# systemd user service for the Fitness Telegram bot.
+# Install:
+#   cp deploy/fitness-bot.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now fitness-bot
+#   loginctl enable-linger $USER     # keep it running when you're logged out
+# Logs:  journalctl --user -u fitness-bot -f
+[Unit]
+Description=Fitness trainer Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/Dev/Projects/Fitness
+ExecStart=%h/Dev/Projects/Fitness/.venv/bin/python bot.py
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

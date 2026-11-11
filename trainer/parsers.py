@@ -139,10 +139,10 @@ def parse_weight(text: str) -> dict:
     """Parse a manual weight log file into a dict."""
     result = {"weight_kg": 0.0, "notes": ""}
     for line in text.strip().splitlines():
-        m = re.match(r"(\d+(?:\.\d+)?)\s*kg", line)
+        m = re.match(r"(?:Weight\s*:\s*)?(\d+(?:\.\d+)?)\s*kg", line, re.IGNORECASE)
         if m:
             result["weight_kg"] = float(m.group(1))
-        m = re.match(r"Notes:\s*(.+)", line)
+        m = re.match(r"Notes\s*:\s*(.+)", line)
         if m:
             result["notes"] = m.group(1).strip()
     return result
@@ -189,22 +189,22 @@ def parse_sleep(text: str) -> dict:
         m = re.match(r"Sleep Cycles:\s*(\d+)", line)
         if m:
             result["sleep_cycles"] = int(m.group(1))
-        m = re.match(r"Awake:\s*(.+?)\s*\((\d+)%\)", line)
+        m = re.match(r"Awake:\s*(.+?)(?:\s*\((\d+)%\))?\s*$", line)
         if m:
             result["stages"]["awake_minutes"] = _parse_duration_to_minutes(m.group(1))
-            result["stages"]["awake_pct"] = int(m.group(2))
-        m = re.match(r"REM:\s*(.+?)\s*\((\d+)%\)", line)
+            result["stages"]["awake_pct"] = int(m.group(2)) if m.group(2) else 0
+        m = re.match(r"REM:\s*(.+?)(?:\s*\((\d+)%\))?\s*$", line)
         if m:
             result["stages"]["rem_minutes"] = _parse_duration_to_minutes(m.group(1))
-            result["stages"]["rem_pct"] = int(m.group(2))
-        m = re.match(r"Light:\s*(.+?)\s*\((\d+)%\)", line)
+            result["stages"]["rem_pct"] = int(m.group(2)) if m.group(2) else 0
+        m = re.match(r"Light:\s*(.+?)(?:\s*\((\d+)%\))?\s*$", line)
         if m:
             result["stages"]["light_minutes"] = _parse_duration_to_minutes(m.group(1))
-            result["stages"]["light_pct"] = int(m.group(2))
-        m = re.match(r"Deep:\s*(.+?)\s*\((\d+)%\)", line)
+            result["stages"]["light_pct"] = int(m.group(2)) if m.group(2) else 0
+        m = re.match(r"Deep:\s*(.+?)(?:\s*\((\d+)%\))?\s*$", line)
         if m:
             result["stages"]["deep_minutes"] = _parse_duration_to_minutes(m.group(1))
-            result["stages"]["deep_pct"] = int(m.group(2))
+            result["stages"]["deep_pct"] = int(m.group(2)) if m.group(2) else 0
         m = re.match(r"Notes:\s*(.+)", line)
         if m:
             result["notes"] = m.group(1).strip()
