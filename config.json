@@ -1,16 +1,16 @@
 {
   "name": "Sai",
-  "age": 25,
+  "age": 26,
   "sex": "male",
   "height_cm": 176.78,
-  "weight_kg": 80,
+  "weight_kg": 79.9,
   "body_fat_pct": 20,
   "experience_years": 4,
-  "phase": "cut",
-  "phase_notes": "Mini-cut. Slight caloric deficit. Prioritise muscle preservation.",
+  "phase": "lean-bulk",
+  "phase_notes": "Post-layoff muscle regain phase (returning from ~16 weeks off, last logged session 2026-04-09). Slight surplus, progressive overload back toward and past prior baseline lifts. Switch back to 'cut' once strength/size meet or exceed the 2026-04-09 baseline.",
   "training_days_target": 7,
   "split": ["push", "pull", "legs", "arms"],
-  "maintenance_calories": 2600,
-  "goal_calories": 2200,
+  "maintenance_calories": 2550,
+  "goal_calories": 2800,
   "goal_protein_g": 160
 }
