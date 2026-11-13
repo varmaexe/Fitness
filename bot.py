@@ -6,11 +6,19 @@ Send the bot:
   • A number like 79.9     → weight/<date>.txt  (anything after the number becomes a note)
   • Sleep / nutrition screenshot(s) → read by Claude, shown for confirmation, then saved
 
-Commands: /today  /summary  /show [type] [date]  /analyze <split> [date]  /help
+Commands: /today  /summary  /show [type] [date]  /analyze <split> [date]  /undo  /help
+
+Reminders (sent only when something is missing) and the Sunday summary run on a
+schedule; every save is git-committed (only the files the bot wrote).
 
 Setup (.env in this folder):
   TELEGRAM_BOT_TOKEN=<token from @BotFather>
   TELEGRAM_ALLOWED_USER_ID=<your numeric id — the bot tells you it on first message>
+Optional (defaults shown; "off" disables):
+  FITBOT_MORNING=09:00        weigh-in reminder if today's weight isn't logged
+  FITBOT_EVENING=21:00        checklist of what's still missing today
+  FITBOT_SUMMARY=sun 20:00    weekly summary, sent automatically
+  FITBOT_GIT=commit           commit | push | off
 
 Run:  .venv/bin/python bot.py
 """
@@ -22,14 +30,14 @@ import re
 import secrets
 import sys
 import tempfile
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+from telegram import Bot, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, ContextTypes,
-                          MessageHandler, filters)
+                          MessageHandler, PersistenceInput, PicklePersistence, filters)
 
 import analyze
 from ingest import SPLITS, IngestError, build_exercise_map, guess_split, parse_date, save
@@ -37,10 +45,22 @@ from trainer.display import find_feedback
 from trainer.extract import ExtractError, extract_screenshots, format_nutrition, format_sleep
 from trainer.parsers import parse_calories, parse_sleep, parse_weight
 from trainer.render import extract_tldr, to_html, to_telegram_html
+from trainer.tracking import git_commit, restore, snapshot, weight_trend
 
 ROOT = Path(__file__).resolve().parent
 WEIGHT_RE = re.compile(r"^\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:kgs?)?\b\s*(.*)$", re.IGNORECASE | re.DOTALL)
 ALBUM_WAIT_S = 2.5
+MAX_PENDING = 20
+ALBUMS: dict[str, list] = {}  # media_group_id -> images; transient, so not persisted
+DAYS = {"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}  # PTB numbering
+COMMANDS = [
+    ("today", "What's logged today"),
+    ("summary", "Weekly review"),
+    ("show", "Saved feedback: /show [type] [date]"),
+    ("analyze", "Re-run analysis: /analyze <split> [date]"),
+    ("undo", "Undo the last save"),
+    ("help", "What I can do"),
+]
 FOLDER = {"sleep": "sleep", "nutrition": "calories"}
 EMOJI = {"sleep": "😴", "nutrition": "🍽"}
 EXAMPLE = {
@@ -56,7 +76,8 @@ HELP = (
     "/today — what's logged today\n"
     "/summary — weekly review\n"
     "/show [type] [date] — saved feedback (default: latest)\n"
-    "/analyze &lt;split&gt; [date] — re-run analysis"
+    "/analyze &lt;split&gt; [date] — re-run analysis\n"
+    "/undo — undo the last save"
 )
 
 log = logging.getLogger("fitbot")
@@ -98,42 +119,61 @@ async def allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
 
 def new_pending(context: ContextTypes.DEFAULT_TYPE, entry: dict) -> str:
     token = secrets.token_hex(4)
-    context.user_data.setdefault("pending", {})[token] = entry
+    pending = context.user_data.setdefault("pending", {})
+    pending[token] = entry
+    while len(pending) > MAX_PENDING:  # drop abandoned previews so the state file stays small
+        pending.pop(next(iter(pending)))
     return token
 
 
-async def with_typing(msg: Message, coro):
+def filled(p: Path) -> bool:
+    return p.exists() and bool(p.read_text().strip())
+
+
+async def commit(context: ContextTypes.DEFAULT_TYPE, paths: list[Path], message: str) -> None:
+    mode = context.bot_data.get("git", "commit")
+    if mode != "off":
+        await asyncio.to_thread(git_commit, ROOT, paths, message, mode == "push")
+
+
+def remember_undo(context: ContextTypes.DEFAULT_TYPE, label: str, snap: dict) -> None:
+    context.user_data["undo"] = {"label": label, "files": snap}
+
+
+async def with_typing(bot: Bot, chat_id: int, coro):
     """Await a long task while showing 'typing…' in the chat."""
     task = asyncio.ensure_future(coro)
     while not task.done():
         try:
-            await msg.chat.send_action(ChatAction.TYPING)
+            await bot.send_chat_action(chat_id, ChatAction.TYPING)
         except Exception:
             pass
         await asyncio.wait({task}, timeout=4.5)
     return task.result()
 
 
-async def send_feedback(msg: Message, feedback: str, title: str, filename: str) -> None:
+async def send_feedback(bot: Bot, chat_id: int, feedback: str, title: str, filename: str) -> None:
     """Short TL;DR as a message + the full feedback as a self-contained HTML file."""
     tldr = to_telegram_html(extract_tldr(feedback))[:3500]
     text = f"<b>{html.escape(title)}</b>\n\n{tldr}"
     try:
-        await msg.reply_text(text, parse_mode=ParseMode.HTML)
+        await bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
     except BadRequest:  # odd markup from the model — send it plain
-        await msg.reply_text(f"{title}\n\n{extract_tldr(feedback)}"[:4000])
-    await msg.reply_document(document=to_html(feedback, title).encode(), filename=filename,
-                             caption="Full feedback")
+        await bot.send_message(chat_id, f"{title}\n\n{extract_tldr(feedback)}"[:4000])
+    await bot.send_document(chat_id, document=to_html(feedback, title).encode(), filename=filename,
+                            caption="Full feedback")
 
 
-async def run_feedback(msg: Message, split: str, day: str) -> None:
+async def run_feedback(msg: Message, context, split: str, day: str) -> None:
+    bot, chat = context.bot, msg.chat_id
     try:
-        _, feedback = await with_typing(msg, asyncio.to_thread(analyze.generate_feedback, split, day))
+        path, feedback = await with_typing(bot, chat, asyncio.to_thread(analyze.generate_feedback, split, day))
     except Exception as e:
         log.exception("analysis failed")
         await msg.reply_text(f"✗ Analysis failed: {e}\nThe log is saved — retry with /analyze {split} {day}")
         return
-    await send_feedback(msg, feedback, f"{split.upper()} — {day}", f"feedback-{split}-{day}.html")
+    await commit(context, [path], f"feedback({split}): {day}")
+    await send_feedback(bot, chat, feedback, f"{split.upper()} — {day}", f"feedback-{split}-{day}.html")
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +199,8 @@ async def handle_workout(msg: Message, context, text: str) -> None:
 async def save_workout(msg: Message, context, token: str, force: bool = False) -> None:
     entry = context.user_data["pending"][token]
     split, day = entry["split"], entry["date"]
+    folder = ROOT / split / day
+    snap = snapshot(ROOT, [folder / "log.txt", folder / "feedback.md"])
     try:
         dest = save(ROOT, entry["text"], split, day, force=force)
     except IngestError:
@@ -168,22 +210,28 @@ async def save_workout(msg: Message, context, token: str, force: bool = False) -
                              reply_markup=InlineKeyboardMarkup(buttons))
         return
     context.user_data["pending"].pop(token, None)
+    remember_undo(context, f"{split} workout {day}", snap)
+    await commit(context, [dest], f"log({split}): {day}")
     await msg.reply_text(f"✓ Saved → {rel(dest)}\n⏳ Analyzing… (about a minute)")
-    await run_feedback(msg, split, day)
+    await run_feedback(msg, context, split, day)
 
 
 # ---------------------------------------------------------------------------
 # weight
 # ---------------------------------------------------------------------------
 
-async def handle_weight(msg: Message, kg: float, note: str) -> None:
+async def handle_weight(msg: Message, context, kg: float, note: str) -> None:
     day = msg_date(msg)
     path = ROOT / "weight" / f"{day}.txt"
+    snap = snapshot(ROOT, [path])
     old = path.read_text().strip() if path.exists() else ""
     path.parent.mkdir(exist_ok=True)
     path.write_text(f"{kg:g}kg\n" + (f"Notes: {note}\n" if note else ""))
+    remember_undo(context, f"weight {day}", snap)
+    await commit(context, [path], f"log(weight): {day}")
     replaced = f"  (replaced: {old.splitlines()[0]})" if old else ""
-    await msg.reply_text(f"⚖️ {kg:g} kg saved for {day}{replaced}")
+    trend = weight_trend(ROOT, day)
+    await msg.reply_text(f"⚖️ {kg:g} kg saved for {day}{replaced}" + (f"\n📈 {trend}" if trend else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -197,13 +245,12 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     item = msg.photo[-1] if msg.photo else msg.document
     group = msg.media_group_id
     if group:  # album: collect all images of the group, then process once
-        albums = context.chat_data.setdefault("albums", {})
-        if group in albums:
-            albums[group].append(item)
+        if group in ALBUMS:
+            ALBUMS[group].append(item)
             return
-        albums[group] = [item]
+        ALBUMS[group] = [item]
         await asyncio.sleep(ALBUM_WAIT_S)
-        items = albums.pop(group)
+        items = ALBUMS.pop(group)
     else:
         items = [item]
     await process_screenshots(msg, context, items)
@@ -221,7 +268,7 @@ async def process_screenshots(msg: Message, context, items: list) -> None:
             await tg_file.download_to_drive(path)
             paths.append(path)
         try:
-            data = await with_typing(msg, asyncio.to_thread(extract_screenshots, paths))
+            data = await with_typing(context.bot, msg.chat_id, asyncio.to_thread(extract_screenshots, paths))
         except ExtractError as e:
             await status.edit_text(f"✗ {e}")
             return
@@ -289,21 +336,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     fixing = context.user_data.get("fixing")
     if fixing and fixing in context.user_data.get("pending", {}):
         entry = context.user_data["pending"][fixing]
-        if not valid_entry(entry["type"], text):
+        if valid_entry(entry["type"], text):
+            entry["text"] = text.strip()
+            context.user_data.pop("fixing")
+            await show_preview(msg, context, fixing, edit=False)
+            return
+        if not WEIGHT_RE.match(text):  # a bare weight still gets logged below
             await msg.reply_text("That doesn't parse — use the same format, e.g.\n"
                                  f"<pre>{html.escape(EXAMPLE[entry['type']])}</pre>",
                                  parse_mode=ParseMode.HTML)
             return
-        entry["text"] = text.strip()
-        context.user_data.pop("fixing")
-        await show_preview(msg, context, fixing, edit=False)
-        return
 
     m = WEIGHT_RE.match(text)
     if m:
         kg = float(m.group(1).replace(",", "."))
         if 30 <= kg <= 250:
-            await handle_weight(msg, kg, m.group(2).strip())
+            await handle_weight(msg, context, kg, m.group(2).strip())
             return
 
     await msg.reply_text(HELP, parse_mode=ParseMode.HTML)
@@ -314,6 +362,10 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     query = update.callback_query
     action, token, *rest = query.data.split(":")
+    if action == "undo":
+        await query.answer()
+        await do_undo(query.message, context, token)
+        return
     entry = context.user_data.get("pending", {}).get(token)
     if entry is None:
         await query.answer("This entry expired — send it again.", show_alert=True)
@@ -340,9 +392,12 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                              f"<pre>{html.escape(entry['text'])}</pre>", parse_mode=ParseMode.HTML)
     elif action == "save":
         path = ROOT / FOLDER[entry["type"]] / f"{entry['date']}.txt"
+        snap = snapshot(ROOT, [path])
         path.parent.mkdir(exist_ok=True)
         path.write_text(entry["text"].strip() + "\n")
         context.user_data["pending"].pop(token, None)
+        remember_undo(context, f"{entry['type']} {entry['date']}", snap)
+        await commit(context, [path], f"log({entry['type']}): {entry['date']}")
         await msg.edit_text(f"✓ Saved → {rel(path)}\n<pre>{html.escape(entry['text'])}</pre>",
                             parse_mode=ParseMode.HTML)
 
@@ -356,9 +411,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(HELP, parse_mode=ParseMode.HTML)
 
 
-def today_status(day: str) -> str:
-    def filled(p: Path) -> bool:
-        return p.exists() and bool(p.read_text().strip())
+def today_rows(day: str) -> list[tuple[str, str | None]]:
     workouts = [s for s in SPLITS + ["cardio"] if filled(ROOT / s / day / "log.txt")]
     rows = [
         ("💪 Workout", ", ".join(workouts) if workouts else None),
@@ -367,6 +420,10 @@ def today_status(day: str) -> str:
         ("⚖️ Weight", f"{parse_weight((ROOT / 'weight' / f'{day}.txt').read_text())['weight_kg']:g} kg"
          if filled(ROOT / "weight" / f"{day}.txt") else None),
     ]
+
+
+def today_status(day: str, rows: list | None = None) -> str:
+    rows = rows if rows is not None else today_rows(day)
     lines = [f"<b>Today — {day}</b>"]
     lines += [f"{'✅' if v else '❌'} {label}" + (f": {html.escape(v)}" if v else "") for label, v in rows]
     return "\n".join(lines)
@@ -382,15 +439,20 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not await allowed(update, context):
         return
     msg = update.effective_message
-    day = msg_date(msg)
     await msg.reply_text("⏳ Building weekly summary… (about a minute)")
+    await send_summary(context, msg.chat_id, msg_date(msg))
+
+
+async def send_summary(context, chat_id: int, day: str) -> None:
     try:
-        _, feedback = await with_typing(msg, asyncio.to_thread(analyze.generate_summary, day))
+        path, feedback = await with_typing(context.bot, chat_id,
+                                           asyncio.to_thread(analyze.generate_summary, day))
     except Exception as e:
         log.exception("summary failed")
-        await msg.reply_text(f"✗ Summary failed: {e}")
+        await context.bot.send_message(chat_id, f"✗ Summary failed: {e}")
         return
-    await send_feedback(msg, feedback, f"WEEKLY SUMMARY — {day}", f"summary-{day}.html")
+    await commit(context, [path], f"summary: {day}")
+    await send_feedback(context.bot, chat_id, feedback, f"WEEKLY SUMMARY — {day}", f"summary-{day}.html")
 
 
 def _split_args(args: list[str]) -> tuple[str | None, str | None]:
@@ -413,7 +475,7 @@ async def cmd_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         title, name = f"{parts[0].upper()} — {parts[1]}", f"feedback-{parts[0]}-{parts[1]}.html"
     else:
         title, name = path.stem.replace("summary-", "WEEKLY SUMMARY — "), f"{path.stem}.html"
-    await send_feedback(msg, path.read_text(), title, name)
+    await send_feedback(context.bot, msg.chat_id, path.read_text(), title, name)
 
 
 async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -426,7 +488,111 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     day = day or msg_date(msg)
     await msg.reply_text(f"⏳ Analyzing {stype} {day}…")
-    await run_feedback(msg, stype, day)
+    await run_feedback(msg, context, stype, day)
+
+
+async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await allowed(update, context):
+        return
+    msg = update.effective_message
+    undo = context.user_data.get("undo")
+    if not undo:
+        await msg.reply_text("Nothing to undo.")
+        return
+    token = secrets.token_hex(4)
+    undo["token"] = token
+    lines = [f"• {r}: " + ("delete" if c is None else "restore previous version") for r, c in undo["files"].items()]
+    buttons = [[InlineKeyboardButton("↩️ Undo", callback_data=f"undo:{token}"),
+                InlineKeyboardButton("✖ Keep", callback_data=f"cancel:{token}")]]
+    context.user_data.setdefault("pending", {})[token] = {"type": "undo"}
+    await msg.reply_text(f"Undo <b>{html.escape(undo['label'])}</b>?\n" + html.escape("\n".join(lines)),
+                         parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def do_undo(msg: Message, context, token: str) -> None:
+    undo = context.user_data.get("undo")
+    context.user_data.get("pending", {}).pop(token, None)
+    if not undo or undo.get("token") != token:
+        await msg.edit_text("Nothing to undo (already undone, or something newer was saved).")
+        return
+    touched = restore(ROOT, undo["files"])
+    context.user_data.pop("undo")
+    await commit(context, touched, f"undo: {undo['label']}")
+    await msg.edit_text(f"↩️ Undone: {undo['label']}")
+
+
+# ---------------------------------------------------------------------------
+# scheduled jobs
+# ---------------------------------------------------------------------------
+
+async def job_morning(context: ContextTypes.DEFAULT_TYPE) -> None:
+    day = date.today().isoformat()
+    if not filled(ROOT / "weight" / f"{day}.txt"):
+        await context.bot.send_message(context.job.chat_id, "⚖️ Morning weigh-in? Just send the number.")
+
+
+async def job_evening(context: ContextTypes.DEFAULT_TYPE) -> None:
+    day = date.today().isoformat()
+    rows = today_rows(day)
+    if any(v is None for _, v in rows):
+        await context.bot.send_message(context.job.chat_id, today_status(day, rows) + "\n\nStill time to log the ❌ ones.",
+                                       parse_mode=ParseMode.HTML)
+
+
+async def job_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
+    day = date.today().isoformat()
+    if (ROOT / f"summary-{day}.md").exists():
+        return  # already ran /summary today
+    await send_summary(context, context.job.chat_id, day)
+
+
+def parse_schedule(value: str, default: str) -> tuple[tuple[int, ...], time] | None:
+    """'09:00' → every day at 09:00; 'sun 20:00' → Sundays; 'off' → None."""
+    value = (value or default).strip().lower()
+    if value in ("off", "none", "0", ""):
+        return None
+    parts = value.split()
+    days = tuple(DAYS[d] for d in parts[0].split(",")) if len(parts) == 2 else tuple(range(7))
+    hh, mm = parts[-1].split(":")
+    tz = datetime.now().astimezone().tzinfo
+    return days, time(int(hh), int(mm), tzinfo=tz)
+
+
+def schedule_jobs(app: Application, chat_id: int) -> None:
+    jobs = [("morning", job_morning, "FITBOT_MORNING", "09:00"),
+            ("evening", job_evening, "FITBOT_EVENING", "21:00"),
+            ("summary", job_summary, "FITBOT_SUMMARY", "sun 20:00")]
+    for name, fn, env, default in jobs:
+        try:
+            sched = parse_schedule(os.environ.get(env, ""), default)
+        except (KeyError, ValueError):
+            log.warning("Bad %s=%r — expected HH:MM, 'sun 20:00' or 'off'", env, os.environ.get(env))
+            continue
+        if sched:
+            days, at = sched
+            app.job_queue.run_daily(fn, at, days=days, chat_id=chat_id, name=name)
+            log.info("Scheduled %s at %s on days %s", name, at.strftime("%H:%M"), days)
+
+
+# ---------------------------------------------------------------------------
+# errors + startup
+# ---------------------------------------------------------------------------
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    err = context.error
+    log.error("Unhandled error", exc_info=err)
+    if isinstance(err, NetworkError):  # transient; polling retries on its own
+        return
+    owner = context.bot_data.get("owner")
+    if owner:
+        try:
+            await context.bot.send_message(owner, f"⚠️ Bot error: {type(err).__name__}: {err}"[:1000])
+        except Exception:
+            log.exception("couldn't report error to owner")
+
+
+async def post_init(app: Application) -> None:
+    await app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS])
 
 
 # ---------------------------------------------------------------------------
@@ -442,11 +608,17 @@ def main() -> None:
     owner = os.environ.get("TELEGRAM_ALLOWED_USER_ID", "").strip()
 
     # Generous timeouts: the default 5s read timeout aborts on a briefly slow network.
-    app = (Application.builder().token(token).concurrent_updates(True)
+    # Pending previews, Fix mode and /undo survive restarts.
+    persistence = PicklePersistence(ROOT / ".bot-state.pickle",
+                                    store_data=PersistenceInput(bot_data=False, chat_data=False))
+    app = (Application.builder().token(token).concurrent_updates(True).persistence(persistence)
            .connect_timeout(15).read_timeout(30).write_timeout(60).media_write_timeout(120)
-           .build())
+           .post_init(post_init).build())
     app.bot_data["owner"] = int(owner) if owner else None
-    if not owner:
+    app.bot_data["git"] = os.environ.get("FITBOT_GIT", "commit").strip().lower()
+    if owner:
+        schedule_jobs(app, int(owner))  # private chat id == user id
+    else:
         log.warning("TELEGRAM_ALLOWED_USER_ID not set — the bot will only reply with your user ID.")
 
     app.add_handler(CommandHandler(["start", "help"], cmd_help))
@@ -454,9 +626,11 @@ def main() -> None:
     app.add_handler(CommandHandler("summary", cmd_summary))
     app.add_handler(CommandHandler("show", cmd_show))
     app.add_handler(CommandHandler("analyze", cmd_analyze))
+    app.add_handler(CommandHandler("undo", cmd_undo))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_image))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(handle_button))
+    app.add_error_handler(on_error)
 
     log.info("Bot running. Ctrl-C to stop.")
     # bootstrap_retries=-1: keep retrying at startup instead of exiting when the
