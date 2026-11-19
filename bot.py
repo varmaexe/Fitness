@@ -40,7 +40,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, Con
                           MessageHandler, PersistenceInput, PicklePersistence, filters)
 
 import analyze
-from ingest import SPLITS, IngestError, build_exercise_map, guess_split, parse_date, save
+from ingest import SPLITS, IngestError, build_exercise_map, guess_split, normalize_log, parse_date, save
 from trainer.display import find_feedback
 from trainer.extract import ExtractError, extract_screenshots, format_nutrition, format_sleep
 from trainer.parsers import parse_calories, parse_sleep, parse_weight
@@ -181,6 +181,7 @@ async def run_feedback(msg: Message, context, split: str, day: str) -> None:
 # ---------------------------------------------------------------------------
 
 async def handle_workout(msg: Message, context, text: str) -> None:
+    text = normalize_log(text)  # Telegram strips FitNotes' **bold** exercise headers
     try:
         day = parse_date(text)
     except IngestError as e:
@@ -420,6 +421,7 @@ def today_rows(day: str) -> list[tuple[str, str | None]]:
         ("⚖️ Weight", f"{parse_weight((ROOT / 'weight' / f'{day}.txt').read_text())['weight_kg']:g} kg"
          if filled(ROOT / "weight" / f"{day}.txt") else None),
     ]
+    return rows
 
 
 def today_status(day: str, rows: list | None = None) -> str:

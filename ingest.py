@@ -52,6 +52,25 @@ def parse_date(text: str) -> str:
         raise IngestError(f"Couldn't parse date from header: {m.group(0)!r}") from e
 
 
+def normalize_log(text: str) -> str:
+    """Restore '** Name **' exercise headers that got stripped in transit.
+
+    Telegram turns FitNotes' '** Name **' into bold formatting, so the message
+    text arrives as ' Name '. An exercise header is recognisable regardless: it
+    is a plain line directly followed by a '- Total ...' summary line.
+    """
+    lines = text.splitlines()
+    out = []
+    for i, line in enumerate(lines):
+        nxt = next((l.strip() for l in lines[i + 1:] if l.strip()), "")
+        bare = line.strip()
+        if (bare and not bare.startswith(("-", "**")) and nxt.startswith("- Total ")
+                and not HEADER_RE.search(bare)):
+            line = f"** {bare} **"
+        out.append(line)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
 def exercises(text: str) -> list[str]:
     return [e.lower() for e in EXERCISE_RE.findall(text)]
 
@@ -96,6 +115,7 @@ def save(root: Path, text: str, split: str, date: str, force: bool = False) -> P
 
 def ingest(text: str, root: Path = ROOT, split: str | None = None,
            force: bool = False, interactive: bool = True) -> Path:
+    text = normalize_log(text)
     date = parse_date(text)
     if split is None:
         split, scores = guess_split(text, build_exercise_map(root))

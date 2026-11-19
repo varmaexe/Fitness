@@ -83,3 +83,21 @@ def test_unknown_exercises_need_split(root):
     with pytest.raises(IngestError, match="infer split"):
         ingest(log, root, interactive=False)
     assert ingest(log, root, split="legs").parent.parent.name == "legs"
+
+
+def test_normalize_log_restores_headers_stripped_by_telegram():
+    from ingest import exercises, normalize_log
+    stripped = ("FitNotes Workout - Thursday 19th November 2026\nTotal Volume: 100 Kg\nTotal Sets: 2\n\n"
+                " Weighted Dips \n- Total Volume: 0 Kg\n- Total Sets: 1\n- 10 reps\n\n"
+                " Cable Crossover \n- Total Sets: 1\n- 10.0 kgs x 10 reps\n")
+    fixed = normalize_log(stripped)
+    assert exercises(fixed) == ["weighted dips", "cable crossover"]
+    assert normalize_log(fixed) == fixed  # idempotent
+
+
+def test_bot_today_rows_returns_list(tmp_path, monkeypatch):
+    import bot
+    monkeypatch.setattr(bot, "ROOT", tmp_path)
+    rows = bot.today_rows("2026-11-20")
+    assert len(rows) == 4 and all(v is None for _, v in rows)
+    assert "Today — 2026-11-20" in bot.today_status("2026-11-20")
