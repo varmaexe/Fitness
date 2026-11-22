@@ -240,3 +240,31 @@ def parse_cardio(text: str) -> dict:
         if m:
             result["notes"] = m.group(1).strip()
     return result
+
+
+_SLEEP_KEYS = ["Sleep Time", "Physical Recovery", "Mental Recovery", "Restfulness",
+               "Sleep Cycles", "Awake", "REM", "Light", "Deep"]
+_NUTRITION_KEYS = ["Calories", "Protein", "Carbs", "Fats", "Fiber"]
+_KEY_RE = re.compile(r"^\s*([A-Za-z][A-Za-z ]*?)\s*:\s*(.*)$")
+
+
+def detect_manual_entry(text: str) -> tuple[str, str] | None:
+    """Recognise a typed sleep or nutrition entry (e.g. 'Sleep Time: 4h 20m').
+
+    Returns (kind, normalized_text) with kind 'sleep' or 'nutrition', or None.
+    Field names are matched case-insensitively and rewritten to the canonical
+    spelling the parsers expect; other lines are kept as-is.
+    """
+    canon = {k.lower(): k for k in _SLEEP_KEYS + _NUTRITION_KEYS + ["Notes"]}
+    canon["fat"] = "Fats"
+    lines = []
+    for line in text.strip().splitlines():
+        m = _KEY_RE.match(line)
+        key = canon.get(m.group(1).lower()) if m else None
+        lines.append(f"{key}: {m.group(2).strip()}" if key else line.strip())
+    normalized = "\n".join(lines)
+    if parse_sleep(normalized)["sleep_time_minutes"] > 0:
+        return "sleep", normalized
+    if parse_calories(normalized)["calories"] > 0:
+        return "nutrition", normalized
+    return None

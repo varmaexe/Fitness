@@ -5,6 +5,7 @@ Send the bot:
   • FitNotes workout text  → filed into <split>/<date>/log.txt, analyzed, feedback sent back
   • A number like 79.9     → weight/<date>.txt  (anything after the number becomes a note)
   • Sleep / nutrition screenshot(s) → read by Claude, shown for confirmation, then saved
+  • Typed sleep / nutrition ("Sleep Time: 7h 10m", "Calories: 2400") → same confirmation
 
 Commands: /today  /summary  /show [type] [date]  /analyze <split> [date]  /undo  /help
 
@@ -43,7 +44,7 @@ import analyze
 from ingest import SPLITS, IngestError, build_exercise_map, guess_split, normalize_log, parse_date, save
 from trainer.display import find_feedback
 from trainer.extract import ExtractError, extract_screenshots, format_nutrition, format_sleep
-from trainer.parsers import parse_calories, parse_sleep, parse_weight
+from trainer.parsers import detect_manual_entry, parse_calories, parse_sleep, parse_weight
 from trainer.render import extract_tldr, to_html, to_telegram_html
 from trainer.tracking import git_commit, restore, snapshot, weight_trend
 
@@ -71,7 +72,9 @@ HELP = (
     "<b>Send me:</b>\n"
     "• FitNotes workout text (Share → Telegram) → saved, analyzed, feedback back\n"
     "• <code>79.9</code> → today's weight (add a note after it: <code>79.9 morning</code>)\n"
-    "• Sleep or nutrition screenshot(s) → I read them, you confirm\n\n"
+    "• Sleep or nutrition screenshot(s) → I read them, you confirm\n"
+    "• Or type it: <code>Sleep Time: 7h 10m</code> / <code>Calories: 2400</code> "
+    "(more lines optional, e.g. <code>Protein: 170g</code>, <code>Notes: ...</code>)\n\n"
     "<b>Commands</b>\n"
     "/today — what's logged today\n"
     "/summary — weekly review\n"
@@ -347,6 +350,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                                  f"<pre>{html.escape(EXAMPLE[entry['type']])}</pre>",
                                  parse_mode=ParseMode.HTML)
             return
+
+    typed = detect_manual_entry(text)
+    if typed:  # typed sleep/nutrition, e.g. "Sleep Time: 4h 20m" — same preview as a screenshot
+        kind, entry_text = typed
+        token = new_pending(context, {"type": kind, "text": entry_text, "date": msg_date(msg)})
+        await show_preview(msg, context, token, edit=False)
+        return
 
     m = WEIGHT_RE.match(text)
     if m:

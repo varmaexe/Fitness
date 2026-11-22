@@ -1,6 +1,7 @@
 # tests/test_parsers.py
 import pytest
-from trainer.parsers import parse_workout, parse_calories, parse_weight, parse_sleep, parse_cardio
+from trainer.parsers import (detect_manual_entry, parse_workout, parse_calories, parse_weight, parse_sleep,
+                             parse_cardio)
 
 WORKOUT_LOG = """FitNotes Workout - Thursday 9th April 2026
 Total Volume: 3,055 Kg
@@ -159,3 +160,31 @@ def test_parse_cardio():
     assert result["intensity"] == "Moderate"
     assert result["heart_rate_bpm"] == 145
     assert result["notes"] == "Felt easy, could push harder"
+
+
+# --- detect_manual_entry (typed sleep / nutrition sent to the bot) ---
+
+def test_detect_manual_sleep_minimal():
+    kind, text = detect_manual_entry("Sleep Time: 4h 20m")
+    assert kind == "sleep"
+    assert parse_sleep(text)["sleep_time_minutes"] == 260
+
+
+def test_detect_manual_sleep_case_insensitive_with_notes():
+    kind, text = detect_manual_entry("  sleep time: 7h 5m\nnotes: no band, estimated")
+    assert kind == "sleep"
+    parsed = parse_sleep(text)
+    assert parsed["sleep_time_minutes"] == 425
+    assert parsed["notes"] == "no band, estimated"
+
+
+def test_detect_manual_nutrition():
+    kind, text = detect_manual_entry("calories: 2450\nprotein: 172g\nfat: 70")
+    assert kind == "nutrition"
+    parsed = parse_calories(text)
+    assert parsed["calories"] == 2450 and parsed["protein_g"] == 172 and parsed["fats_g"] == 70
+
+
+@pytest.mark.parametrize("text", ["79.9", "hello", "Sleep Time: ", "Notes: slept badly", "Calories: none"])
+def test_detect_manual_entry_rejects_non_entries(text):
+    assert detect_manual_entry(text) is None
