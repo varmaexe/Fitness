@@ -6,11 +6,11 @@
   "weight_kg": 79.9,
   "body_fat_pct": 20,
   "experience_years": 4,
-  "phase": "lean-bulk",
-  "phase_notes": "Post-layoff muscle regain phase (returning from ~16 weeks off, last logged session 2026-04-09). Slight surplus, progressive overload back toward and past prior baseline lifts. Switch back to 'cut' once strength/size meet or exceed the 2026-04-09 baseline.",
+  "phase": "recomp",
+  "phase_notes": "Body recomposition at maintenance (started 2026-11-22). Returning from ~16-week layoff; at ~20% body fat, so muscle regain toward the 2026-04-09 baseline happens at maintenance while fat comes off. Goal: lose belly/face fat while progressively overloading. Keep bodyweight flat (weekly average within ±0.5kg of 79.9kg); protein floor 175g/day. Judge progress by lifts, waist measurement and photos, not the scale. Switch to 'lean-bulk' (~2800 kcal) once body fat is ~15% AND lifts meet or exceed the 2026-04-09 baseline.",
   "training_days_target": 7,
   "split": ["push", "pull", "legs", "arms"],
   "maintenance_calories": 2550,
-  "goal_calories": 2800,
-  "goal_protein_g": 160
+  "goal_calories": 2550,
+  "goal_protein_g": 175
 }

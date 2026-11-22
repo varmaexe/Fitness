@@ -59,7 +59,7 @@ After Week 3, resume normal logging in `push/`, `pull/`, `legs/`, `arms/` and ru
 
 ---
 
-## Phase B — Weeks 4-14 (~10 weeks): Muscle regain, slight surplus
+## Phase B — Weeks 4-14 (~10 weeks): Muscle regain, slight surplus  *(superseded — now follows Phase B′)*
 
 Train hard, progressively add weight/reps week to week. `config.json` phase set to `lean-bulk` for this window.
 
@@ -71,6 +71,34 @@ Train hard, progressively add weight/reps week to week. `config.json` phase set 
 | Carbs | ~370g | Fuels the volume/intensity needed to pass the old baseline |
 
 **Expect:** fullness/pump back within 2-4 weeks (glycogen/water), strength matching the 2026-04-09 baseline by ~week 8-10, likely exceeding it by week 12-14.
+
+> **Revised 2026-11-22:** Phase B replaced by Phase B′ (recomp) below. Weight had drifted 76 → 79.9kg without nutrition tracking, and at ~20% body fat a surplus mostly adds belly/face fat. Original Phase B kept for reference — it now runs *after* the recomp, from ~15% body fat.
+
+---
+
+## Phase B′ — From 2026-11-22 (~3-4 months): Recomposition at maintenance  ← CURRENT
+
+Regain lost muscle at maintenance while losing fat. Returning lifters at ~20% body fat can do both at once — muscle memory doesn't need a surplus. `config.json` phase set to `recomp`.
+
+| Macro | Target | Why |
+|---|---|---|
+| Calories | ~2550 kcal (maintenance) | No surplus — fat comes off while muscle returns |
+| Protein | 175g floor (~2.2g/kg) | The main driver of muscle gain without a surplus |
+| Fat | ~70g | Hormone support |
+| Carbs | ~300g | Fuels training intensity |
+
+**Rules:**
+1. **Bodyweight stays flat** — weekly average within ±0.5kg of 79.9kg. Weigh every morning.
+   - Up >0.5kg over 3 weeks → drop ~100-150 kcal.
+   - Down >0.5kg → add ~100-150 kcal.
+2. **Progressive overload every session.** Lifts stalling 3+ weeks → add ~150 kcal.
+3. **Every muscle hit ≥2×/week**, legs included. No gaps over 7 days between same-type sessions.
+4. **Log nutrition daily** — even rough. At maintenance there's no surplus to cover a protein miss.
+5. **Waist measurement every 2 weeks + monthly photos** (same light, same time). The scale won't show recomp; waist and lifts will.
+
+Optional faster fat loss: run ~2350-2400 kcal (slight deficit) — still works during the regain window.
+
+**Exit criteria → Phase B (lean bulk, ~2800 kcal):** body fat ~15% (visibly flatter belly, leaner face) **and** lifts meet or exceed the 2026-04-09 baseline. From there, a lean bulk adds size without softness, followed by Phase C only if needed.
 
 ---
 
